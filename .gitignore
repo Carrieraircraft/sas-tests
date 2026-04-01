@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.env
+*.log
+report.html
+assets/
+*.db
+*.db-shm
+*.db-wal
+.perf_baseline*.json
