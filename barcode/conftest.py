@@ -1,0 +1,2 @@
+"""barcode suite fixtures."""
+
