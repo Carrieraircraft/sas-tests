@@ -13,18 +13,19 @@ class TestSpecList:
         specs = await ws.get_spec_list()
         assert isinstance(specs, list)
 
-    async def test_spec_list_has_128_entries(self, ws):
-        """验证规格列表包含 128 条记录"""
+    async def test_spec_list_has_128_entries(self, ws, db_isolation):
+        """验证规格列表恰好包含 128 条记录（后端不应返回越界 ID）"""
         specs = await ws.get_spec_list()
         assert len(specs) == 128, f"Expected 128 specs, got {len(specs)}"
 
-    async def test_spec_list_ids_range(self, ws):
-        """验证规格 ID 范围为 0-127"""
+    async def test_spec_list_ids_range(self, ws, db_isolation):
+        """验证规格 ID 严格在 0-127 范围内，无越界条目"""
         specs = await ws.get_spec_list()
-        ids = [s.get("value") for s in specs]
+        ids = [s.get("value") for s in specs if s.get("value") is not None]
+        assert len(ids) == 128
         assert min(ids) == 0
         assert max(ids) == 127
-        assert len(set(ids)) == 128
+        assert len(set(ids)) == 128, f"IDs not unique: {sorted(ids)}"
 
     async def test_spec_list_response_time(self, ws):
         """验证规格列表响应时间在阈值内"""

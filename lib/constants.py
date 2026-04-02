@@ -43,6 +43,8 @@ class MsgType:
     SPEC_REF_RESPONSE = "screw_spec_reference_response"
     SPEC_CLONE = "screw_spec_clone"
     SPEC_CLONE_RESPONSE = "screw_spec_clone_response"
+    SPEC_SET_ACTIVE = "screw_spec_set_active"
+    SPEC_SET_ACTIVE_RESPONSE = "screw_spec_set_active_response"
     # 统一模组
     MODULE_CONFIG = "module_config"
     MODULE_CONFIG_RESPONSE = "module_config_response"
@@ -64,3 +66,6 @@ class MsgType:
     ROLE_SWITCH_RESPONSE = "role_switch_response"
     # 硬件状态推送
     HARDWARE_STATUS_UPDATE = "hardware_status_update"
+    # 槽位状态（MCU 物理槽位 ↔ 逻辑 ID 映射）
+    SLOT_STATUS_GET = "slot_status_get"
+    SLOT_STATUS_RESPONSE = "slot_status_get_response"

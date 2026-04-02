@@ -45,10 +45,6 @@ class TestCowIsolation:
 
 
 class TestCloneChain:
-    @pytest.mark.xfail(
-        reason="当前后端 cloneScrewSpec 在实机返回失败；链路通过后改为正式用例",
-        strict=False,
-    )
     async def test_deep_clone_chain_five_levels_ancestor_edit_isolated(self, ws):
         """若 screw_spec_clone 可用：沿链克隆 5 次后修改祖先，末端应保持副本语义。"""
         base = 106

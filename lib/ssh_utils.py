@@ -1,5 +1,6 @@
 """SSH 远程控制树莓派后端服务"""
 import asyncio
+import json
 import time
 from typing import Optional
 import paramiko
@@ -9,9 +10,10 @@ class RemoteBackend:
     """通过 SSH 控制树莓派上的后端服务"""
     
     SERVICE_NAME = "asa-backend"
-    DB_PATH = "/home/pi/backend/releases/current/data/SAS.db"
-    LOG_PATH = "/home/pi/backend/releases/current/logs/asa_backend_sm.log"
+    DB_PATH = "/home/pi/data/SAS.db"
+    LOG_PATH = "/home/pi/logs/asa_backend_sm.log"
     BACKUP_PATH = "/tmp/SAS_test_backup.db"
+    DUMP_MCU_SCRIPT = "/home/pi/dump_mcu_config.py"
     
     def __init__(self, host: str, user: str = "pi", password: Optional[str] = None,
                  key_filename: Optional[str] = None, port: int = 22):
@@ -123,6 +125,79 @@ class RemoteBackend:
             sftp.close()
         await loop.run_in_executor(None, _upload)
     
+    async def query_db(self, sql: str) -> list:
+        """在树莓派上执行 SQLite 查询，返回行列表（每行为 dict）。
+
+        使用 python3 内置 sqlite3 模块（无需系统安装 sqlite3 命令行工具）。
+
+        示例:
+            rows = await remote.query_db(
+                "SELECT screw_name, prog_cnt, is_active FROM Mode1_Screw_Param WHERE id=115"
+            )
+            assert rows[0]["is_active"] == 1
+        """
+        # 使用 python3 内置模块，避免依赖 sqlite3 命令行工具
+        py_script = (
+            "import sqlite3, json, sys; "
+            f"db = sqlite3.connect('{self.DB_PATH}'); "
+            "db.row_factory = sqlite3.Row; "
+            "cur = db.execute(sys.argv[1]); "
+            "rows = [dict(r) for r in cur.fetchall()]; "
+            "print(json.dumps(rows))"
+        )
+        cmd = f"python3 -c {json.dumps(py_script)} {json.dumps(sql)}"
+        loop = asyncio.get_event_loop()
+        stdout, stderr, code = await loop.run_in_executor(
+            None, lambda: self._exec(cmd)
+        )
+        if code != 0:
+            raise RuntimeError(f"query_db error (code={code}): {stderr.strip()}")
+        return json.loads(stdout) if stdout.strip() else []
+
+    async def dump_mcu_to_bin(self, remote_bin_path: str = "/tmp/mcu_test.bin") -> str:
+        """在树莓派上运行 dump_mcu_config.py --save-bin，返回生成的 .bin 文件路径。
+        
+        需要树莓派上已有 dump_mcu_config.py 脚本（DUMP_MCU_SCRIPT），
+        且 pi 用户有 sudo 权限（SPI 读取需要 root）。
+        
+        Returns:
+            远程 .bin 文件的绝对路径
+        """
+        loop = asyncio.get_event_loop()
+        stdout, stderr, code = await loop.run_in_executor(
+            None,
+            lambda: self._exec(
+                f"sudo python3 {self.DUMP_MCU_SCRIPT} --save-bin {remote_bin_path} -o /tmp/mcu_dump_test.txt",
+                timeout=30,
+            )
+        )
+        if code != 0:
+            raise RuntimeError(f"dump_mcu failed (code={code}): {stderr.strip()}")
+        # 尝试从 stdout 解析实际保存路径（脚本输出 "原始二进制已保存: <path>"）
+        for line in stdout.splitlines():
+            if "原始二进制已保存" in line:
+                return line.split(":")[-1].strip()
+        return remote_bin_path
+
+    async def download_mcu_bin(self, remote_path: str, local_path: str) -> None:
+        """通过 SFTP 将树莓派上的 .bin 文件下载到本地。
+        
+        Args:
+            remote_path: 树莓派上的文件路径（如 /tmp/mcu_test.bin）
+            local_path:  本地保存路径（如 C:/tmp/mcu_test.bin）
+        """
+        loop = asyncio.get_event_loop()
+
+        def _download():
+            self._ensure_connected()
+            sftp = self._client.open_sftp()
+            try:
+                sftp.get(remote_path, local_path)
+            finally:
+                sftp.close()
+
+        await loop.run_in_executor(None, _download)
+
     def close(self):
         if self._client:
             self._client.close()
