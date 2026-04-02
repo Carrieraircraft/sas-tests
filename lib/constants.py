@@ -53,9 +53,14 @@ class MsgType:
     MODULE_ERROR = "module_error"
     # 系统
     SYSTEM_PARAM_UPDATE = "system_param_update"
+    SYSTEM_PARAM_UPDATE_RESPONSE = "system_param_update_response"
+    SYSTEM_PARAMS_BATCH_UPDATE = "system_params_batch_update"
+    SYSTEM_PARAMS_BATCH_UPDATE_RESPONSE = "system_params_batch_update_response"
     DATA_RESPONSE = "data_response"
     PING = "ping"
     PONG = "pong"
     # 角色
     ROLE_SWITCH = "role_switch"
     ROLE_SWITCH_RESPONSE = "role_switch_response"
+    # 硬件状态推送
+    HARDWARE_STATUS_UPDATE = "hardware_status_update"

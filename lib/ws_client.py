@@ -219,6 +219,57 @@ class WSClient:
             ),
         )
 
+    async def set_work_mode(
+        self,
+        work_mode: str,
+        default_screw_id: int = 1,
+        default_module_id: int = 1,
+        barcode_enabled: bool = False,
+        automation_mode: bool = False,
+        modify_user: str = "test",
+    ) -> dict:
+        """切换业务工作模式（螺丝/模组），发送 system_params_batch_update。
+
+        Args:
+            work_mode: "screw" 或 "module"
+            default_screw_id: 默认螺丝规格ID
+            default_module_id: 默认模组ID
+            barcode_enabled: 是否启用条码模式
+            automation_mode: 是否启用自动化模组（支臂架）
+            modify_user: 修改用户标识
+        """
+        msg = {
+            "type": MsgType.SYSTEM_PARAMS_BATCH_UPDATE,
+            "params": [
+                {"param_name": "BarcodeEnabled", "param_value": str(barcode_enabled).lower()},
+                {"param_name": "WorkMode", "param_value": work_mode},
+                {"param_name": "AutomationMode", "param_value": str(automation_mode).lower()},
+                {"param_name": "DefaultScrewId", "param_value": str(default_screw_id)},
+                {"param_name": "DefaultModuleId", "param_value": str(default_module_id)},
+            ],
+            "modify_user": modify_user,
+        }
+        return await self.request(msg, MsgType.SYSTEM_PARAMS_BATCH_UPDATE_RESPONSE)
+
+    async def get_work_mode_from_status(self, timeout: float = 3.0) -> str | None:
+        """等待一条 hardware_status_update 推送，返回其中的 work_mode 字段值。
+
+        Returns:
+            "screw" | "module" 或 None（若超时或字段缺失）
+        """
+        try:
+            msg = await self.wait_for_condition(
+                lambda m: (
+                    m.get("type") == MsgType.HARDWARE_STATUS_UPDATE
+                    and "data" in m
+                    and "job_statistics" in m.get("data", {})
+                ),
+                timeout=timeout,
+            )
+            return msg["data"]["job_statistics"].get("work_mode")
+        except TimeoutError:
+            return None
+
     async def save_screw_param(self, spec_id: int, data: dict) -> dict:
         msg = dict(data)
         msg.setdefault("type", MsgType.SCREW_PARAM_CONFIG)
