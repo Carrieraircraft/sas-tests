@@ -288,6 +288,9 @@ class TestMcuWriteVerify:
         await _activate(ws, sid)
         try:
             payload = ScrewSpecFactory.with_steps(sid, 1)
+            payload["detail_params"]["torque_min"] = 0.1
+            payload["detail_params"]["torque_target"] = 0.5
+            payload["detail_params"]["torque_max"] = 0.6
             payload["step_params"][0]["ref_torque"] = ref_torque
             resp = await ws.save_screw_param(sid, payload)
             assert resp.get("success") is True, f"save failed: {resp}"

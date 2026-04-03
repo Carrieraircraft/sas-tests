@@ -184,6 +184,9 @@ class TestSaveRoundtrip:
         await _activate(ws, sid)
         try:
             payload = ScrewSpecFactory.with_steps(sid, 1)
+            payload["detail_params"]["torque_min"] = 0.1
+            payload["detail_params"]["torque_target"] = 0.5
+            payload["detail_params"]["torque_max"] = 0.6
             payload["step_params"][0]["ref_torque"] = ref_torque
             save_r = await ws.save_screw_param(sid, payload)
             assert save_r.get("success") is True
