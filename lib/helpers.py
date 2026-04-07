@@ -156,7 +156,7 @@ class ScrewSpecFactory:
                     ok_if_1=2,
                     ok_if_2=4,
                     ok_if_3=8,
-                    ok_if_4=16,
+                    ok_if_4=1,
                     ref_vel=700 + i * 10,
                     ref_torque=1.8 + i * 0.02,
                     ref_degree=650 + i * 5,
@@ -226,10 +226,10 @@ class ScrewSpecFactory:
             "step_params": [
                 cls._base_step(
                     i,
-                    ok_if_1=random.choice([0, 2, 4]),
-                    ok_if_2=random.choice([0, 2, 4, 8]),
-                    ok_if_3=random.choice([0, 4, 8, 16]),
-                    ok_if_4=random.choice([0, 8, 16]),
+                    ok_if_1=random.choice([1, 2, 4, 8]),
+                    ok_if_2=random.choice([0, 1, 2, 4, 8]),
+                    ok_if_3=random.choice([0, 1, 2, 4, 8]),
+                    ok_if_4=random.choice([0, 1, 2, 4, 8]),
                     ref_vel=random.randint(vel_min, vel_max),
                     ref_torque=round(random.uniform(torque_min, torque_max), 2),
                     ref_degree=random.randint(degree_min, degree_max),

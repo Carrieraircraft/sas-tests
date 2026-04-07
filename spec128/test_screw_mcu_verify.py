@@ -6,7 +6,7 @@
         → MCU SPI flash (CONFIG_DATA.ctrl_cfg.screw_cfg.screw[slot])
 
 运行要求：
-    - --ssh-host=192.168.0.172   (树莓派 IP)
+    - --ssh-host=192.168.0.221   (树莓派 IP)
     - --ssh-user=pi              (SSH 用户，默认 pi)
     - --ssh-password=<pwd>       或 --ssh-key=<path>
     - 树莓派上 pi 用户有 sudo 权限（MCU dump 需要 root 访问 SPI）
@@ -15,11 +15,11 @@
 运行示例：
     cd e:\\SoftDev\\SAS_Dev\\tests
     python -m pytest spec128/test_screw_mcu_verify.py -v \\
-        --ssh-host=192.168.0.172 --ssh-user=pi --ssh-password=xxx
+        --ssh-host=192.168.0.221 --ssh-user=pi --ssh-password=xxx
 
 带 MCU 验证（需 sudo + 真实 MCU）：
     python -m pytest spec128/test_screw_mcu_verify.py -v -m hardware \\
-        --ssh-host=192.168.0.172 --ssh-password=xxx
+        --ssh-host=192.168.0.221 --ssh-password=xxx
 
 注意：
     MCU 物理槽位（0-15）与逻辑 ID（0-127）的映射由后端 SlotTable 管理。

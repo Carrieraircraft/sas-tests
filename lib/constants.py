@@ -23,7 +23,7 @@ STRESS_WS_TIMEOUT = 30.0
 BACKEND_RESTART_TIMEOUT = 30.0
 
 # --- 默认连接 ---
-DEFAULT_WS_URL = "ws://192.168.0.172:80"
+DEFAULT_WS_URL = "ws://192.168.0.221:80"
 
 # --- WS 消息类型 ---
 class MsgType:
