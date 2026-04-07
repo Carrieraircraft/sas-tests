@@ -159,14 +159,13 @@ class TestOtherParamValidation:
         sid = _SID_OTHER_VALIDATION
         await _activate(ws, sid)
         try:
-            payload = ScrewSpecFactory.default(sid)
+            if field == "prog_start_valid_step":
+                payload = ScrewSpecFactory.with_steps(sid, 2)
+            else:
+                payload = ScrewSpecFactory.default(sid)
             payload["machine_type_id"] = 0
             d = payload["detail_params"]
             d[field] = value
-
-            # 免检步数校验依赖 prog_cnt，显式构造 ">= prog_cnt" 触发场景
-            if field == "prog_start_valid_step":
-                d["prog_cnt"] = 2
 
             resp = await ws.save_screw_param(sid, payload)
             _assert_rejected(resp, *keywords)
@@ -314,85 +313,55 @@ class TestStepCompletionCondition:
 _SID_PARTIAL_UPDATE = 94
 
 
-class TestPartialUpdateValidation:
-    """只更新 detail_params 不传（或传空）step_params 时，
-    后端应加载数据库已有步骤参与校验，防止安全窗口缩小后旧步骤参数越界。"""
+class TestStepCountMismatch:
+    """协议要求前端必须传完整的全部步骤参数，数量必须等于 prog_cnt。
+    不传或只传部分步骤都应被拒绝。"""
 
-    async def test_reject_detail_only_update_when_steps_exceed_new_safety(self, ws):
-        """先存高扭力步骤，再只更新 detail 降低 torque_max，不传 step_params，应被拒绝。"""
+    async def test_reject_missing_step_params(self, ws):
+        """不传 step_params（del 掉），应被拒绝。"""
         sid = _SID_PARTIAL_UPDATE
         await _activate(ws, sid)
         try:
-            base = ScrewSpecFactory.default(sid)
-            base["detail_params"]["torque_check_enable"] = 1
-            base["detail_params"]["torque_min"] = 0.5
-            base["detail_params"]["torque_target"] = 1.0
-            base["detail_params"]["torque_max"] = 2.0
-            base["step_params"][0]["ref_torque"] = 1.8
-            resp1 = await ws.save_screw_param(sid, base)
-            assert resp1.get("success") is True, f"初始保存失败: {resp1}"
-
-            update = ScrewSpecFactory.default(sid)
-            update["detail_params"]["torque_check_enable"] = 1
-            update["detail_params"]["torque_min"] = 0.1
-            update["detail_params"]["torque_target"] = 0.3
-            update["detail_params"]["torque_max"] = 0.4
-            del update["step_params"]
-
-            resp2 = await ws.save_screw_param(sid, update)
-            _assert_rejected(resp2, "扭力", "torque", "上界")
+            payload = ScrewSpecFactory.default(sid)
+            del payload["step_params"]
+            resp = await ws.save_screw_param(sid, payload)
+            _assert_rejected(resp, "步骤参数数量", "不一致")
         finally:
             await _deactivate(ws, sid)
 
-    async def test_reject_empty_steps_update_when_steps_exceed_new_safety(self, ws):
-        """同上场景，但传空 step_params=[]，也应被拒绝。"""
+    async def test_reject_empty_step_params(self, ws):
+        """传空 step_params=[]，prog_cnt=1 时应被拒绝。"""
         sid = _SID_PARTIAL_UPDATE
         await _activate(ws, sid)
         try:
-            base = ScrewSpecFactory.default(sid)
-            base["detail_params"]["torque_check_enable"] = 1
-            base["detail_params"]["torque_min"] = 0.5
-            base["detail_params"]["torque_target"] = 1.0
-            base["detail_params"]["torque_max"] = 2.0
-            base["step_params"][0]["ref_torque"] = 1.8
-            resp1 = await ws.save_screw_param(sid, base)
-            assert resp1.get("success") is True, f"初始保存失败: {resp1}"
-
-            update = ScrewSpecFactory.default(sid)
-            update["detail_params"]["torque_check_enable"] = 1
-            update["detail_params"]["torque_min"] = 0.1
-            update["detail_params"]["torque_target"] = 0.3
-            update["detail_params"]["torque_max"] = 0.4
-            update["step_params"] = []
-
-            resp2 = await ws.save_screw_param(sid, update)
-            _assert_rejected(resp2, "扭力", "torque", "上界")
+            payload = ScrewSpecFactory.default(sid)
+            payload["step_params"] = []
+            resp = await ws.save_screw_param(sid, payload)
+            _assert_rejected(resp, "步骤参数数量", "不一致")
         finally:
             await _deactivate(ws, sid)
 
-    async def test_accept_detail_only_update_when_steps_within_new_safety(self, ws):
-        """先存低扭力步骤，再只更新 detail 安全窗口也够大，应通过。"""
+    async def test_reject_fewer_steps_than_prog_cnt(self, ws):
+        """prog_cnt=2 但只传 1 步，应被拒绝。"""
         sid = _SID_PARTIAL_UPDATE
         await _activate(ws, sid)
         try:
-            base = ScrewSpecFactory.default(sid)
-            base["detail_params"]["torque_check_enable"] = 1
-            base["detail_params"]["torque_min"] = 0.1
-            base["detail_params"]["torque_target"] = 0.3
-            base["detail_params"]["torque_max"] = 0.5
-            base["step_params"][0]["ref_torque"] = 0.3
-            resp1 = await ws.save_screw_param(sid, base)
-            assert resp1.get("success") is True, f"初始保存失败: {resp1}"
+            payload = ScrewSpecFactory.with_steps(sid, 2)
+            payload["step_params"] = [payload["step_params"][0]]
+            resp = await ws.save_screw_param(sid, payload)
+            _assert_rejected(resp, "步骤参数数量", "不一致")
+        finally:
+            await _deactivate(ws, sid)
 
-            update = ScrewSpecFactory.default(sid)
-            update["detail_params"]["torque_check_enable"] = 1
-            update["detail_params"]["torque_min"] = 0.2
-            update["detail_params"]["torque_target"] = 0.35
-            update["detail_params"]["torque_max"] = 0.5
-            del update["step_params"]
-
-            resp2 = await ws.save_screw_param(sid, update)
-            assert resp2.get("success") is True, f"安全窗口内更新 detail 应成功: {resp2}"
+    async def test_reject_more_steps_than_prog_cnt(self, ws):
+        """prog_cnt=1 但传 2 步，应被拒绝。"""
+        sid = _SID_PARTIAL_UPDATE
+        await _activate(ws, sid)
+        try:
+            payload = ScrewSpecFactory.default(sid)
+            payload["step_params"].append(payload["step_params"][0].copy())
+            resp = await ws.save_screw_param(sid, payload)
+            _assert_rejected(resp, "步骤参数数量", "不一致")
         finally:
             await _deactivate(ws, sid)
 

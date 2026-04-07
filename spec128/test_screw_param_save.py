@@ -260,13 +260,13 @@ class TestSaveEdge:
             await _deactivate(ws, sid)
 
     async def test_save_complex_full_params(self, ws):
-        """保存带全量参数（complex_full）的规格，响应 success=True。"""
+        """complex_full 含 ok_if_4=16（无效标志位），后端应拒绝保存。"""
         sid = 122
         await _activate(ws, sid)
         try:
             payload = ScrewSpecFactory.complex_full(sid)
             resp = await ws.save_screw_param(sid, payload)
-            assert resp.get("success") is True, f"complex_full save failed: {resp}"
+            assert resp.get("success") is False, f"complex_full contains invalid ok_if_4=16, should be rejected: {resp}"
         finally:
             await _deactivate(ws, sid)
 

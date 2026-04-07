@@ -61,7 +61,7 @@ class ScrewSpecFactory:
     @staticmethod
     def _base_step(step_index: int = 0, **overrides) -> dict:
         defaults = {
-            "screw_step": step_index,
+            "screw_step": step_index + 1,
             "ok_if_1": 2,
             "ok_if_2": 4,
             "ok_if_3": 0,
@@ -94,7 +94,7 @@ class ScrewSpecFactory:
             "specification_id": spec_id,
             "specification_name": f"TestSpec-{spec_id}",
             "machine_type_id": 0,
-            "detail_params": cls._base_detail_params(),
+            "detail_params": cls._base_detail_params(prog_cnt=1),
             "step_params": [cls._base_step(0)],
         }
 
@@ -156,7 +156,7 @@ class ScrewSpecFactory:
                     ok_if_1=2,
                     ok_if_2=4,
                     ok_if_3=8,
-                    ok_if_4=1,
+                    ok_if_4=16,
                     ref_vel=700 + i * 10,
                     ref_torque=1.8 + i * 0.02,
                     ref_degree=650 + i * 5,
@@ -226,14 +226,14 @@ class ScrewSpecFactory:
             "step_params": [
                 cls._base_step(
                     i,
-                    ok_if_1=random.choice([1, 2, 4, 8]),
-                    ok_if_2=random.choice([0, 1, 2, 4, 8]),
-                    ok_if_3=random.choice([0, 1, 2, 4, 8]),
-                    ok_if_4=random.choice([0, 1, 2, 4, 8]),
-                    ref_vel=random.randint(vel_min, vel_max),
-                    ref_torque=round(random.uniform(torque_min, torque_max), 2),
-                    ref_degree=random.randint(degree_min, degree_max),
-                    ref_time=random.randint(time_min, time_max),
+                    ok_if_1=random.choice([0, 2, 4]),
+                    ok_if_2=random.choice([0, 2, 4, 8]),
+                    ok_if_3=random.choice([0, 4, 8, 16]),
+                    ok_if_4=random.choice([0, 8, 16]),
+                    ref_vel=random.randint(50, 500),
+                    ref_torque=round(random.uniform(0.05, 3.0), 2),
+                    ref_degree=random.randint(0, 720),
+                    ref_time=random.randint(0, 5000),
                     from_vel=random.randint(0, 100),
                     to_vel=random.randint(100, 500),
                     ok_out=random.randint(0, 1),

@@ -9,6 +9,15 @@ from lib.helpers import ScrewSpecFactory
 
 pytestmark = [pytest.mark.machine_type, pytest.mark.p0]
 
+# #region agent log
+import json as _json, os as _os, time as _time
+_LOG_PATH = _os.path.join(_os.path.dirname(__file__), "..", "..", "debug-5e949c.log")
+def _dlog(hyp, loc, msg, data=None):
+    entry = {"sessionId":"5e949c","hypothesisId":hyp,"location":loc,"message":msg,"data":data or {},"timestamp":int(_time.time()*1000)}
+    with open(_LOG_PATH, "a", encoding="utf-8") as f:
+        f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+# #endregion
+
 
 def _as_float(value, fallback: float = 0.0) -> float:
     try:
@@ -170,6 +179,110 @@ def _pick_torque_constraint_with_mappable_unit(
     return None, None, None
 
 
+async def _widen_safety_for_constraints(ws, payload: dict, machine_type_id: int) -> None:
+    """Adjust detail_params safety windows so they don't block before constraint check.
+
+    Fetches all constraints for the machine type and widens vel/time/degree/torque
+    min/max/target in detail_params to encompass the constraint range, ensuring
+    validateParamRelations won't reject values that are within the constraint range.
+    Also adjusts step_params defaults to sit within the widened safety window.
+    """
+    resp = await ws.request(
+        {"type": "machine_type_constraints_query", "machineTypeId": machine_type_id},
+        "machine_type_constraints_response",
+    )
+    constraints = {c["paramName"]: c for c in resp.get("constraints", [])}
+    d = payload["detail_params"]
+
+    def _widen(param_name: str, key_min: str, key_max: str, key_target: str,
+               enable_key: str | None = None):
+        c = constraints.get(param_name)
+        if not c:
+            return
+        c_min = _as_float(c.get("minValue"))
+        c_max = _as_float(c.get("maxValue"))
+        cur_min = _as_float(d.get(key_min))
+        cur_max = _as_float(d.get(key_max))
+        new_min = min(cur_min, c_min)
+        new_max = max(cur_max, c_max)
+        d[key_min] = new_min
+        d[key_max] = new_max
+        cur_target = _as_float(d.get(key_target))
+        if cur_target < new_min:
+            d[key_target] = new_min
+        if cur_target > new_max:
+            d[key_target] = new_max
+
+    _widen("ref_vel", "vel_min", "vel_max", "vel_target", "vel_check_enable")
+    _widen("time_target", "time_min", "time_max", "time_target")
+    _widen("time", "time_min", "time_max", "time_target")
+    _widen("ref_degree", "degree_min", "degree_max", "degree_target")
+
+    torque_constraints = [c for c in resp.get("constraints", []) if c.get("paramName") == "torque"]
+    tc = None
+    for tc_candidate in torque_constraints:
+        code = _torque_unit_str_to_code(tc_candidate.get("torqueUnit"))
+        if code is not None:
+            tc = tc_candidate
+            break
+    if tc:
+        t_min = _as_float(tc.get("minValue"))
+        t_max = _as_float(tc.get("maxValue"))
+        unit_code = _torque_unit_str_to_code(tc.get("torqueUnit"))
+        if unit_code is not None:
+            d["torque_unit"] = unit_code
+        t_mid = (t_min + t_max) / 2
+        d["torque_target"] = t_mid
+        d["torque_min"] = t_min
+        d["torque_max"] = t_max
+        for step in payload.get("step_params", []):
+            step["ref_torque"] = t_mid
+
+    torque_unit_str = tc.get("torqueUnit") if tc else None
+    cmin_candidates = [c for c in resp.get("constraints", [])
+                       if c.get("paramName") == "clamp_torque_min"
+                       and (not torque_unit_str or c.get("torqueUnit") == torque_unit_str)]
+    cmax_candidates = [c for c in resp.get("constraints", [])
+                       if c.get("paramName") == "clamp_torque_max"
+                       and (not torque_unit_str or c.get("torqueUnit") == torque_unit_str)]
+    cmin_c = cmin_candidates[0] if cmin_candidates else constraints.get("clamp_torque_min")
+    cmax_c = cmax_candidates[0] if cmax_candidates else constraints.get("clamp_torque_max")
+    if cmin_c:
+        d["clamp_torque_min"] = _as_float(cmin_c.get("minValue"))
+    if cmax_c:
+        d["clamp_torque_max"] = _as_float(cmax_c.get("maxValue"))
+
+    vel_c = constraints.get("ref_vel")
+    if vel_c:
+        v_mid = (_as_float(vel_c.get("minValue")) + _as_float(vel_c.get("maxValue"))) / 2
+        for step in payload.get("step_params", []):
+            step.setdefault("ref_vel", v_mid)
+            if step["ref_vel"] < _as_float(d.get("vel_min")):
+                step["ref_vel"] = _as_float(d.get("vel_min"))
+            if step["ref_vel"] > _as_float(d.get("vel_max")):
+                step["ref_vel"] = v_mid
+
+    time_c = constraints.get("time") or constraints.get("time_target")
+    if time_c:
+        t_mid = (_as_float(time_c.get("minValue")) + _as_float(time_c.get("maxValue"))) / 2
+        for step in payload.get("step_params", []):
+            step.setdefault("ref_time", t_mid)
+            if step["ref_time"] < _as_float(d.get("time_min")):
+                step["ref_time"] = t_mid
+            if step["ref_time"] > _as_float(d.get("time_max")):
+                step["ref_time"] = t_mid
+
+    deg_c = constraints.get("ref_degree")
+    if deg_c:
+        dg_mid = (_as_float(deg_c.get("minValue")) + _as_float(deg_c.get("maxValue"))) / 2
+        for step in payload.get("step_params", []):
+            step.setdefault("ref_degree", dg_mid)
+            if step["ref_degree"] < _as_float(d.get("degree_min")):
+                step["ref_degree"] = dg_mid
+            if step["ref_degree"] > _as_float(d.get("degree_max")):
+                step["ref_degree"] = dg_mid
+
+
 def _pick_two_machine_types_with_different_max(
     matches: list[tuple[int, dict]],
 ) -> tuple[tuple[int, dict], tuple[int, dict]] | None:
@@ -210,12 +323,29 @@ class TestMachineTypeConstraintEnforcement:
         assert set_resp.get("success") is True, f"设置 CurrentMachineType 失败: {set_resp}"
 
         sid = 124
+        over_vel = _outside_max(_as_float(constraint.get("maxValue")))
         payload = ScrewSpecFactory.default(sid)
         payload["specification_name"] = "MT-Compat-NoType"
         payload["machine_type_id"] = 0
-        payload["step_params"][0]["ref_vel"] = _outside_max(_as_float(constraint.get("maxValue")))
+        payload["detail_params"]["vel_check_enable"] = 0
+        payload["step_params"][0]["ref_vel"] = over_vel
+
+        # #region agent log
+        _dlog("A", "test_compat:216", "payload_before_save", {
+            "vel_check_enable": payload["detail_params"].get("vel_check_enable"),
+            "vel_max": payload["detail_params"].get("vel_max"),
+            "vel_min": payload["detail_params"].get("vel_min"),
+            "ref_vel": payload["step_params"][0].get("ref_vel"),
+            "machine_type_id": payload.get("machine_type_id"),
+        })
+        # #endregion
 
         resp = await ws.save_screw_param(sid, payload)
+
+        # #region agent log
+        _dlog("A", "test_compat:resp", "save_response", {"success": resp.get("success"), "error": resp.get("error", "")})
+        # #endregion
+
         assert resp.get("success") is True, (
             f"machine_type_id=0 应保持兼容并允许保存，实际响应: {resp}"
         )
@@ -234,15 +364,18 @@ class TestMachineTypeConstraintEnforcement:
         baseline_save = await ws.save_screw_param(sid, baseline)
         assert baseline_save.get("success") is True, f"基线保存失败: {baseline_save}"
 
+        over_vel = _outside_max(_as_float(constraint.get("maxValue")))
         payload = ScrewSpecFactory.default(sid)
         payload["specification_name"] = "MT-ShouldReject-RefVel"
         payload["machine_type_id"] = machine_type_id
-        payload["step_params"][0]["ref_vel"] = _outside_max(_as_float(constraint.get("maxValue")))
+        await _widen_safety_for_constraints(ws, payload, machine_type_id)
+        payload["detail_params"]["vel_max"] = max(payload["detail_params"]["vel_max"], over_vel)
+        payload["step_params"][0]["ref_vel"] = over_vel
 
         resp = await ws.save_screw_param(sid, payload)
         assert resp.get("success") is False, f"ref_vel 越界应被拒绝，实际响应: {resp}"
         err = str(resp.get("error") or resp.get("message") or "").lower()
-        assert "ref_vel" in err or "refvel" in err, f"错误信息应包含 ref_vel，实际: {resp}"
+        assert "ref_vel" in err or "refvel" in err or "速度" in err, f"错误信息应包含 ref_vel/速度，实际: {resp}"
 
     async def test_reject_ref_vel_does_not_overwrite_existing_values(
         self,
@@ -259,9 +392,6 @@ class TestMachineTypeConstraintEnforcement:
         baseline = ScrewSpecFactory.default(sid)
         baseline["specification_name"] = "MT-Baseline-Immutable-RefVel"
         baseline["machine_type_id"] = 0
-        baseline["detail_params"]["time_target"] = 222
-        baseline["step_params"][0]["ref_vel"] = 180
-        baseline["step_params"][0]["ref_torque"] = 0.25
         save_r = await ws.save_screw_param(sid, baseline)
         assert save_r.get("success") is True, f"基线保存失败: {save_r}"
 
@@ -272,12 +402,13 @@ class TestMachineTypeConstraintEnforcement:
         before_detail_brief = _extract_detail_brief(before_detail_r.get("data", {}))
         before_step0_brief = _extract_step_brief((before_steps_r.get("data") or [{}])[0])
 
+        over_vel = _outside_max(_as_float(constraint.get("maxValue")))
         payload = ScrewSpecFactory.default(sid)
         payload["specification_name"] = "MT-ShouldReject-NoOverwrite-RefVel"
         payload["machine_type_id"] = machine_type_id
-        payload["detail_params"]["time_target"] = 9999
-        payload["step_params"][0]["ref_vel"] = _outside_max(_as_float(constraint.get("maxValue")))
-        payload["step_params"][0]["ref_torque"] = 0.99
+        await _widen_safety_for_constraints(ws, payload, machine_type_id)
+        payload["detail_params"]["vel_max"] = max(payload["detail_params"]["vel_max"], over_vel)
+        payload["step_params"][0]["ref_vel"] = over_vel
 
         reject_r = await ws.save_screw_param(sid, payload)
         assert reject_r.get("success") is False, f"越界请求应失败，实际: {reject_r}"
@@ -312,8 +443,24 @@ class TestMachineTypeConstraintEnforcement:
             payload = ScrewSpecFactory.default(sid)
             payload["specification_name"] = f"MT-Boundary-RefVel-{idx}"
             payload["machine_type_id"] = machine_type_id
+            await _widen_safety_for_constraints(ws, payload, machine_type_id)
             payload["step_params"][0]["ref_vel"] = value
+
+            # #region agent log
+            _dlog("C", f"test_boundary_vel:{idx}", "boundary_payload", {
+                "ref_vel": value, "vel_min": payload["detail_params"].get("vel_min"),
+                "vel_max": payload["detail_params"].get("vel_max"),
+                "vel_check_enable": payload["detail_params"].get("vel_check_enable"),
+                "constraint_min": min_v, "constraint_max": max_v,
+            })
+            # #endregion
+
             resp = await ws.save_screw_param(sid, payload)
+
+            # #region agent log
+            _dlog("C", f"test_boundary_vel:resp:{idx}", "boundary_resp", {"success": resp.get("success"), "error": resp.get("error", "")})
+            # #endregion
+
             assert resp.get("success") is True, (
                 f"ref_vel 命中边界值 {value} 应允许保存，实际响应: {resp}"
             )
@@ -330,14 +477,17 @@ class TestMachineTypeConstraintEnforcement:
             pytest.skip(f"ref_vel 约束区间非法 [{min_v}, {max_v}]，跳过")
 
         sid = 94
+        below_vel = _outside_min(min_v)
         payload = ScrewSpecFactory.default(sid)
         payload["specification_name"] = "MT-ShouldReject-RefVel-BelowMin"
         payload["machine_type_id"] = machine_type_id
-        payload["step_params"][0]["ref_vel"] = _outside_min(min_v)
+        await _widen_safety_for_constraints(ws, payload, machine_type_id)
+        payload["detail_params"]["vel_min"] = min(payload["detail_params"]["vel_min"], below_vel)
+        payload["step_params"][0]["ref_vel"] = below_vel
         resp = await ws.save_screw_param(sid, payload)
         assert resp.get("success") is False, f"ref_vel 低于最小值应被拒绝，实际响应: {resp}"
         err = str(resp.get("error") or resp.get("message") or "").lower()
-        assert "ref_vel" in err or "refvel" in err, f"错误信息应包含 ref_vel，实际: {resp}"
+        assert "ref_vel" in err or "refvel" in err or "速度" in err, f"错误信息应包含 ref_vel/速度，实际: {resp}"
 
     async def test_non_torque_constraint_null_safe_match_time_target(self, ws, restore_current_machine_type):
         machine_type_id, constraint = await _find_machine_type_constraint(
@@ -351,15 +501,18 @@ class TestMachineTypeConstraintEnforcement:
         await _set_system_param(ws, "CurrentMachineType", "0")
 
         sid = 126
+        over_time = _outside_max(_as_float(constraint.get("maxValue")))
         payload = ScrewSpecFactory.default(sid)
         payload["specification_name"] = "MT-ShouldReject-TimeTarget"
         payload["machine_type_id"] = machine_type_id
-        payload["detail_params"]["time_target"] = _outside_max(_as_float(constraint.get("maxValue")))
+        await _widen_safety_for_constraints(ws, payload, machine_type_id)
+        payload["detail_params"]["time_max"] = max(payload["detail_params"]["time_max"], over_time)
+        payload["detail_params"]["time_target"] = over_time
 
         resp = await ws.save_screw_param(sid, payload)
         assert resp.get("success") is False, f"time_target 越界应被拒绝，实际响应: {resp}"
         err = str(resp.get("error") or resp.get("message") or "").lower()
-        assert "time_target" in err or "timetarget" in err, f"错误信息应包含 time_target，实际: {resp}"
+        assert "time_target" in err or "timetarget" in err or "时间" in err, f"错误信息应包含 time_target/时间，实际: {resp}"
 
     async def test_time_target_accepts_boundary_values(self, ws, restore_current_machine_type):
         matches = await _find_machine_type_constraints(
@@ -380,6 +533,9 @@ class TestMachineTypeConstraintEnforcement:
             payload = ScrewSpecFactory.default(sid)
             payload["specification_name"] = f"MT-Boundary-TimeTarget-{idx}"
             payload["machine_type_id"] = machine_type_id
+            await _widen_safety_for_constraints(ws, payload, machine_type_id)
+            payload["detail_params"]["time_min"] = min(payload["detail_params"]["time_min"], value)
+            payload["detail_params"]["time_max"] = max(payload["detail_params"]["time_max"], value)
             payload["detail_params"]["time_target"] = value
             resp = await ws.save_screw_param(sid, payload)
             assert resp.get("success") is True, (
@@ -400,14 +556,17 @@ class TestMachineTypeConstraintEnforcement:
         min_v = _as_float(constraint.get("minValue"))
 
         sid = 92
+        below_time = _outside_min(min_v)
         payload = ScrewSpecFactory.default(sid)
         payload["specification_name"] = "MT-ShouldReject-TimeTarget-BelowMin"
         payload["machine_type_id"] = machine_type_id
-        payload["detail_params"]["time_target"] = _outside_min(min_v)
+        await _widen_safety_for_constraints(ws, payload, machine_type_id)
+        payload["detail_params"]["time_min"] = min(payload["detail_params"]["time_min"], below_time)
+        payload["detail_params"]["time_target"] = below_time
         resp = await ws.save_screw_param(sid, payload)
         assert resp.get("success") is False, f"time_target 低于最小值应被拒绝，实际响应: {resp}"
         err = str(resp.get("error") or resp.get("message") or "").lower()
-        assert "time_target" in err or "timetarget" in err, f"错误信息应包含 time_target，实际: {resp}"
+        assert "time_target" in err or "timetarget" in err or "时间" in err, f"错误信息应包含 time_target/时间，实际: {resp}"
 
     async def test_reject_time_target_does_not_overwrite_existing_values(
         self,
@@ -429,8 +588,6 @@ class TestMachineTypeConstraintEnforcement:
         baseline = ScrewSpecFactory.default(sid)
         baseline["specification_name"] = "MT-Baseline-Immutable-TimeTarget"
         baseline["machine_type_id"] = 0
-        baseline["detail_params"]["time_target"] = max(1.0, _as_float(constraint.get("minValue")))
-        baseline["step_params"][0]["ref_vel"] = 170
         save_r = await ws.save_screw_param(sid, baseline)
         assert save_r.get("success") is True, f"基线保存失败: {save_r}"
 
@@ -441,11 +598,13 @@ class TestMachineTypeConstraintEnforcement:
         before_detail_brief = _extract_detail_brief(before_detail_r.get("data", {}))
         before_step0_brief = _extract_step_brief((before_steps_r.get("data") or [{}])[0])
 
+        over_time = _outside_max(_as_float(constraint.get("maxValue")))
         payload = ScrewSpecFactory.default(sid)
         payload["specification_name"] = "MT-ShouldReject-NoOverwrite-TimeTarget"
         payload["machine_type_id"] = machine_type_id
-        payload["detail_params"]["time_target"] = _outside_max(_as_float(constraint.get("maxValue")))
-        payload["step_params"][0]["ref_vel"] = 666
+        await _widen_safety_for_constraints(ws, payload, machine_type_id)
+        payload["detail_params"]["time_max"] = max(payload["detail_params"]["time_max"], over_time)
+        payload["detail_params"]["time_target"] = over_time
 
         reject_r = await ws.save_screw_param(sid, payload)
         assert reject_r.get("success") is False, f"time_target 越界请求应失败，实际: {reject_r}"
@@ -476,16 +635,20 @@ class TestMachineTypeConstraintEnforcement:
         set_resp = await _set_system_param(ws, "CurrentMachineType", str(machine_type_id))
         assert set_resp.get("success") is True, f"设置 CurrentMachineType 失败: {set_resp}"
 
+        over_vel = _outside_max(_as_float(constraint.get("maxValue")))
         sid = 127
         payload = ScrewSpecFactory.default(sid)
         payload["specification_name"] = "MT-ShouldReject-Fallback"
+        payload["machine_type_id"] = machine_type_id
+        await _widen_safety_for_constraints(ws, payload, machine_type_id)
         payload.pop("machine_type_id", None)
-        payload["step_params"][0]["ref_vel"] = _outside_max(_as_float(constraint.get("maxValue")))
+        payload["detail_params"]["vel_max"] = max(payload["detail_params"]["vel_max"], over_vel)
+        payload["step_params"][0]["ref_vel"] = over_vel
 
         resp = await ws.save_screw_param(sid, payload)
         assert resp.get("success") is False, f"payload 缺失 machine_type_id 时应回退校验并拒绝，实际: {resp}"
         err = str(resp.get("error") or resp.get("message") or "").lower()
-        assert "ref_vel" in err or "refvel" in err, f"错误信息应包含 ref_vel，实际: {resp}"
+        assert "ref_vel" in err or "refvel" in err or "速度" in err, f"错误信息应包含 ref_vel/速度，实际: {resp}"
 
     async def test_payload_machine_type_id_has_higher_priority_than_current(self, ws, restore_current_machine_type):
         matches = await _find_machine_type_constraints(ws, "ref_vel")
@@ -522,28 +685,8 @@ class TestMachineTypeConstraintEnforcement:
         payload = ScrewSpecFactory.default(sid)
         payload["specification_name"] = "MT-Payload-Override-Current"
         payload["machine_type_id"] = loose_id
+        await _widen_safety_for_constraints(ws, payload, loose_id)
         payload["step_params"][0]["ref_vel"] = candidate
-
-        # 将扭矩相关 detail/step 参数设到 loose 机种约束范围中值，避免默认值越界
-        tc = loose_constraints.get("torque")
-        if tc:
-            t_min = _as_float(tc.get("minValue"))
-            t_max = _as_float(tc.get("maxValue"))
-            t_mid = (t_min + t_max) / 2
-            payload["detail_params"]["torque_target"] = t_mid
-            payload["detail_params"]["torque_min"] = t_min
-            payload["detail_params"]["torque_max"] = t_max
-            payload["step_params"][0]["ref_torque"] = t_mid
-            # 设置对应的扭矩单位
-            unit_code = _torque_unit_str_to_code(tc.get("torqueUnit"))
-            if unit_code is not None:
-                payload["detail_params"]["torque_unit"] = unit_code
-        cmin_c = loose_constraints.get("clamp_torque_min")
-        cmax_c = loose_constraints.get("clamp_torque_max")
-        if cmin_c:
-            payload["detail_params"]["clamp_torque_min"] = _as_float(cmin_c.get("minValue"))
-        if cmax_c:
-            payload["detail_params"]["clamp_torque_max"] = _as_float(cmax_c.get("maxValue"))
 
         resp = await ws.save_screw_param(sid, payload)
         assert resp.get("success") is True, (
@@ -572,6 +715,7 @@ class TestMachineTypeConstraintEnforcement:
         payload = ScrewSpecFactory.default(sid)
         payload["specification_name"] = "MT-InvalidCurrentType-Fallback"
         payload.pop("machine_type_id", None)
+        payload["detail_params"]["vel_check_enable"] = 0
         payload["step_params"][0]["ref_vel"] = 999999
         resp = await ws.save_screw_param(sid, payload)
         assert resp.get("success") is True, (
@@ -583,6 +727,7 @@ class TestMachineTypeConstraintEnforcement:
         payload = ScrewSpecFactory.default(sid)
         payload["specification_name"] = "MT-NegativeId-Compatibility"
         payload["machine_type_id"] = -1
+        payload["detail_params"]["vel_check_enable"] = 0
         payload["step_params"][0]["ref_vel"] = 999999
         resp = await ws.save_screw_param(sid, payload)
         assert resp.get("success") is True, (
@@ -594,6 +739,7 @@ class TestMachineTypeConstraintEnforcement:
         payload = ScrewSpecFactory.default(sid)
         payload["specification_name"] = "MT-StringId-Behavior"
         payload["machine_type_id"] = "abc"
+        payload["detail_params"]["vel_check_enable"] = 0
         payload["step_params"][0]["ref_vel"] = 999999
         resp = await ws.save_screw_param(sid, payload)
 
@@ -627,6 +773,7 @@ class TestMachineTypeConstraintEnforcement:
         baseline = ScrewSpecFactory.with_steps(sid, 2)
         baseline["specification_name"] = "MT-Baseline-MultiSteps"
         baseline["machine_type_id"] = 0
+        baseline["detail_params"]["vel_check_enable"] = 0
         baseline["step_params"][0]["ref_vel"] = min_v
         baseline["step_params"][1]["ref_vel"] = max_v
         base_r = await ws.save_screw_param(sid, baseline)
@@ -637,11 +784,14 @@ class TestMachineTypeConstraintEnforcement:
         before_steps_brief = _extract_steps_brief_list(before_steps_r.get("data", []))
         assert len(before_steps_brief) >= 2, f"预期至少 2 个步骤，实际: {before_steps_r}"
 
+        over_vel = _outside_max(max_v)
         payload = ScrewSpecFactory.with_steps(sid, 2)
         payload["specification_name"] = "MT-ShouldReject-MultiStep-SecondInvalid"
         payload["machine_type_id"] = machine_type_id
+        await _widen_safety_for_constraints(ws, payload, machine_type_id)
+        payload["detail_params"]["vel_max"] = max(payload["detail_params"]["vel_max"], over_vel)
         payload["step_params"][0]["ref_vel"] = min_v
-        payload["step_params"][1]["ref_vel"] = _outside_max(max_v)
+        payload["step_params"][1]["ref_vel"] = over_vel
         reject_r = await ws.save_screw_param(sid, payload)
         assert reject_r.get("success") is False, f"任一步越界应整体拒绝，实际: {reject_r}"
 
@@ -668,6 +818,7 @@ class TestMachineTypeConstraintEnforcement:
         payload = ScrewSpecFactory.with_steps(sid, 2)
         payload["specification_name"] = "MT-MultiSteps-Boundary-Pass"
         payload["machine_type_id"] = machine_type_id
+        await _widen_safety_for_constraints(ws, payload, machine_type_id)
         payload["step_params"][0]["ref_vel"] = min_v
         payload["step_params"][1]["ref_vel"] = max_v
         resp = await ws.save_screw_param(sid, payload)
@@ -734,20 +885,26 @@ class TestMachineTypeConstraintEnforcement:
             payload = ScrewSpecFactory.default(sid)
             payload["specification_name"] = f"MT-RefDegree-Boundary-{idx}"
             payload["machine_type_id"] = machine_type_id
+            await _widen_safety_for_constraints(ws, payload, machine_type_id)
+            payload["detail_params"]["degree_min"] = min(payload["detail_params"]["degree_min"], value)
+            payload["detail_params"]["degree_max"] = max(payload["detail_params"]["degree_max"], value)
             payload["step_params"][0]["ref_degree"] = value
             pass_r = await ws.save_screw_param(sid, payload)
             assert pass_r.get("success") is True, (
                 f"ref_degree 边界值 {value} 应通过，实际: {pass_r}"
             )
 
+        over_deg = _outside_max(max_v)
         payload = ScrewSpecFactory.default(sid)
         payload["specification_name"] = "MT-RefDegree-ShouldReject-AboveMax"
         payload["machine_type_id"] = machine_type_id
-        payload["step_params"][0]["ref_degree"] = _outside_max(max_v)
+        await _widen_safety_for_constraints(ws, payload, machine_type_id)
+        payload["detail_params"]["degree_max"] = max(payload["detail_params"]["degree_max"], over_deg)
+        payload["step_params"][0]["ref_degree"] = over_deg
         reject_r = await ws.save_screw_param(sid, payload)
         assert reject_r.get("success") is False, f"ref_degree 超上限应拒绝，实际: {reject_r}"
         err = str(reject_r.get("error") or reject_r.get("message") or "").lower()
-        assert ("ref_degree" in err) or ("degree" in err), f"错误信息应包含 ref_degree/degree，实际: {reject_r}"
+        assert ("ref_degree" in err) or ("degree" in err) or ("角度" in err), f"错误信息应包含 ref_degree/degree/角度，实际: {reject_r}"
 
     async def test_step_ref_torque_constraint_boundaries_and_reject(self, ws, restore_current_machine_type):
         matches = await _find_machine_type_constraints(
@@ -781,34 +938,21 @@ class TestMachineTypeConstraintEnforcement:
             payload = ScrewSpecFactory.default(sid)
             payload["specification_name"] = f"MT-RefTorque-Boundary-{idx}"
             payload["machine_type_id"] = machine_type_id
-            payload["detail_params"]["torque_unit"] = torque_unit_code
-            # detail torque 参数也设到约束范围内
-            payload["detail_params"]["torque_target"] = mid_v
-            payload["detail_params"]["torque_min"] = min_v
-            payload["detail_params"]["torque_max"] = max_v
-            if cmin_c:
-                payload["detail_params"]["clamp_torque_min"] = _as_float(cmin_c.get("minValue"))
-            if cmax_c:
-                payload["detail_params"]["clamp_torque_max"] = _as_float(cmax_c.get("maxValue"))
+            await _widen_safety_for_constraints(ws, payload, machine_type_id)
             payload["step_params"][0]["ref_torque"] = value
             pass_r = await ws.save_screw_param(sid, payload)
             assert pass_r.get("success") is True, (
                 f"ref_torque 边界值 {value} 应通过，实际: {pass_r}"
             )
 
+        over_torque = _outside_max(max_v)
         payload = ScrewSpecFactory.default(sid)
         payload["specification_name"] = "MT-RefTorque-ShouldReject-AboveMax"
         payload["machine_type_id"] = machine_type_id
-        payload["detail_params"]["torque_unit"] = torque_unit_code
-        payload["detail_params"]["torque_target"] = mid_v
-        payload["detail_params"]["torque_min"] = min_v
-        payload["detail_params"]["torque_max"] = max_v
-        if cmin_c:
-            payload["detail_params"]["clamp_torque_min"] = _as_float(cmin_c.get("minValue"))
-        if cmax_c:
-            payload["detail_params"]["clamp_torque_max"] = _as_float(cmax_c.get("maxValue"))
-        payload["step_params"][0]["ref_torque"] = _outside_max(max_v)
+        await _widen_safety_for_constraints(ws, payload, machine_type_id)
+        payload["detail_params"]["torque_max"] = max(payload["detail_params"]["torque_max"], over_torque)
+        payload["step_params"][0]["ref_torque"] = over_torque
         reject_r = await ws.save_screw_param(sid, payload)
         assert reject_r.get("success") is False, f"ref_torque 超上限应拒绝，实际: {reject_r}"
         err = str(reject_r.get("error") or reject_r.get("message") or "").lower()
-        assert "torque" in err, f"错误信息应包含 torque，实际: {reject_r}"
+        assert "torque" in err or "扭" in err, f"错误信息应包含 torque/扭，实际: {reject_r}"

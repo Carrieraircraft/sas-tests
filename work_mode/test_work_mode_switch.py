@@ -21,6 +21,16 @@ from lib.helpers import ScrewSpecFactory, ModuleFactory
 
 pytestmark = [pytest.mark.system, pytest.mark.p1]
 
+# #region agent log
+import json as _json, os as _os
+_LOG_PATH = _os.path.join(_os.path.dirname(__file__), "..", "..", "debug-5e949c.log")
+def _dlog(hyp, loc, msg, data=None):
+    import time as _t
+    entry = {"sessionId":"5e949c","hypothesisId":hyp,"location":loc,"message":msg,"data":data or {},"timestamp":int(_t.time()*1000)}
+    with open(_LOG_PATH, "a", encoding="utf-8") as f:
+        f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+# #endregion
+
 TEST_SCREW_ID_A = 110
 TEST_SCREW_ID_B = 111
 TEST_MODULE_ID_A = 110
@@ -169,7 +179,17 @@ class TestWorkModeSwitchWithDifferentSpecs:
         """螺丝模式 + 规格A：推送中应携带 work_mode = 'screw'，DefaultScrewId 匹配"""
         await _ensure_screw_spec(ws, TEST_SCREW_ID_A)
 
+        # #region agent log
+        _dlog("E", "screw_spec_a:before", "about_to_switch", {"target": "screw", "screw_id": TEST_SCREW_ID_A})
+        # #endregion
+
         actual_mode = await _switch_and_wait(ws, "screw", "screw", default_screw_id=TEST_SCREW_ID_A)
+
+        # #region agent log
+        db_mode = await _get_param_value(ws, "WorkMode")
+        _dlog("E", "screw_spec_a:after", "switch_result", {"actual_mode": actual_mode, "db_work_mode": db_mode})
+        # #endregion
+
         assert actual_mode == "screw", f"规格A螺丝模式推送 work_mode = '{actual_mode}'"
 
         screw_id_val = await _get_param_value(ws, "DefaultScrewId")
@@ -356,7 +376,17 @@ class TestWorkModeSwitchEdgeCases:
         )
         assert resp.get("success") is True, f"单参数更新 WorkMode 失败: {resp}"
 
+        # #region agent log
+        _dlog("E", "single_param:resp", "update_resp", {"success": resp.get("success")})
+        # #endregion
+
         actual_mode = await _wait_work_mode_after(ws, send_ts, "screw")
+
+        # #region agent log
+        db_mode = await _get_param_value(ws, "WorkMode")
+        _dlog("E", "single_param:after", "switch_result", {"actual_mode": actual_mode, "db_work_mode": db_mode})
+        # #endregion
+
         assert actual_mode == "screw", (
             f"单参数更新 WorkMode 后推送 work_mode = '{actual_mode}'，期望 'screw'"
         )

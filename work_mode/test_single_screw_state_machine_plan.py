@@ -159,7 +159,7 @@ class TestSingleScrewSpecStatistics:
         status = await _wait_status_after(
             ws,
             send_ts,
-            predicate=lambda m: "job_statistics" in m.get("data", {}),
+            predicate=lambda m: _extract_job_statistics(m).get("work_mode") == "screw",
         )
         stats = _extract_job_statistics(status)
 
