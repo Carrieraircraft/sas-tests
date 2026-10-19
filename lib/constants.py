@@ -45,6 +45,11 @@ class MsgType:
     SPEC_CLONE_RESPONSE = "screw_spec_clone_response"
     SPEC_SET_ACTIVE = "screw_spec_set_active"
     SPEC_SET_ACTIVE_RESPONSE = "screw_spec_set_active_response"
+    # 批量 CSV 导入/导出
+    SPEC_CSV_EXPORT = "screw_spec_csv_export"
+    SPEC_CSV_EXPORT_RESPONSE = "screw_spec_csv_export_response"
+    SPEC_CSV_IMPORT = "screw_spec_csv_import"
+    SPEC_CSV_IMPORT_RESPONSE = "screw_spec_csv_import_response"
     # 统一模组
     MODULE_CONFIG = "module_config"
     MODULE_CONFIG_RESPONSE = "module_config_response"

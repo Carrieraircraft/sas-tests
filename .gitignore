@@ -10,3 +10,9 @@ assets/
 *.db-shm
 *.db-wal
 .perf_baseline*.json
+
+# Synology Drive / Windows 同步元数据（勿提交）
+.SynologyWorkingDirectory/
+**/.SynologyWorkingDirectory/
+desktop.ini
+**/desktop.ini
