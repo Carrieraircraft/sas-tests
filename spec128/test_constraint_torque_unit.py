@@ -325,22 +325,8 @@ class TestSeatPointTorqueFactorZero:
         finally:
             await _deactivate(ws, sid)
 
-    async def test_factor_below_min_rejected(self, ws):
-        """seat_point_torque_factor = 0.05（大于 0 但小于下限 0.1）应被拒绝。"""
-        sid = _SID
-        await _activate(ws, sid)
-        try:
-            payload = ScrewSpecFactory.default(sid)
-            payload["machine_type_id"] = 0
-            d = payload["detail_params"]
-            d["seat_point_torque_factor"] = 0.05
-
-            resp = await ws.save_screw_param(sid, payload)
-            assert resp.get("success") is False, (
-                f"seat_point_torque_factor=0.05 应被拒绝，实际: {resp}"
-            )
-        finally:
-            await _deactivate(ws, sid)
+    # test_factor_below_min_rejected 已删除：贴合点改由后端按曲线自算，seat_point_torque_factor
+    # 不再参与校验（见 DataQueryService::validateParamRelations 注释），0.05 不再被拒绝。
 
 
 class TestTorqueRoundtrip:
