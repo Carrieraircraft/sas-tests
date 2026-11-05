@@ -18,13 +18,24 @@ _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from dump_mcu_config import (  # noqa: E402
-    CONFIG_DATA,
-    SCREW_MAX,
-    SCREW_PROG_MAX,
-    TORQUE_UNIT_MAP,
-    bytes_to_str,
-)
+try:
+    from dump_mcu_config import (  # noqa: E402
+        CONFIG_DATA,
+        SCREW_MAX,
+        SCREW_PROG_MAX,
+        TORQUE_UNIT_MAP,
+        bytes_to_str,
+    )
+    _DUMP_IMPORT_ERROR = None
+except ModuleNotFoundError as _exc:
+    # dump_mcu_config.py 是树莓派侧工具，不在本仓库。缺失时不让整个套件在收集阶段报错，
+    # 仅在真正构造 McuVerifier 时才失败（这些用例本来就依赖 --ssh-host 与 MCU/SPI）。
+    CONFIG_DATA = None
+    SCREW_MAX = 16
+    SCREW_PROG_MAX = 8
+    TORQUE_UNIT_MAP = {}
+    bytes_to_str = None
+    _DUMP_IMPORT_ERROR = _exc
 
 
 class McuVerifier:
@@ -45,6 +56,10 @@ class McuVerifier:
             FileNotFoundError: 文件不存在
             ValueError: 文件太小，可能不是完整的 CONFIG_DATA dump
         """
+        if _DUMP_IMPORT_ERROR is not None:
+            raise RuntimeError(
+                "缺少 dump_mcu_config 模块（树莓派侧工具，需放到仓库根目录或 PYTHONPATH）"
+            ) from _DUMP_IMPORT_ERROR
         with open(bin_path, "rb") as f:
             raw = f.read()
 
