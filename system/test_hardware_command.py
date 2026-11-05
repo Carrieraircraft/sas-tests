@@ -6,8 +6,8 @@ pytestmark = [pytest.mark.system, pytest.mark.p1]
 
 
 class TestHardwareCommand:
-    async def test_hardware_command_invalid(self, ws):
-        resp = await ws.request({"type": "hardware_command"}, "hardware_response")
+    async def test_hardware_command_invalid(self, ws_auth):
+        resp = await ws_auth.request({"type": "hardware_command"}, "hardware_response")
         assert resp.get("type") == "hardware_response"
         assert resp.get("success") is False
 

@@ -6,8 +6,8 @@ pytestmark = [pytest.mark.network, pytest.mark.p1]
 
 
 class TestNetworkStatus:
-    async def test_network_request_ethernet_query(self, ws):
-        resp = await ws.request(
+    async def test_network_request_ethernet_query(self, ws_auth):
+        resp = await ws_auth.request(
             {"type": "network_request", "action": "query", "target": "ethernet"},
             "network_response",
         )
@@ -40,9 +40,9 @@ class TestNetworkStatus:
         assert resp.get("type") == "header_network_mode_set_response"
         assert resp.get("success") is True
 
-    async def test_network_status_query_push(self, ws):
-        await ws.send({"type": "network_status_query"})
-        pushed = await ws.wait_for_condition(
+    async def test_network_status_query_push(self, ws_auth):
+        await ws_auth.send({"type": "network_status_query"})
+        pushed = await ws_auth.wait_for_condition(
             lambda m: m.get("type") == "network_status_push",
             timeout=5.0,
         )

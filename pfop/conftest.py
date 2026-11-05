@@ -21,6 +21,13 @@ async def pfop_env(ws_url):
     """Ensure PFOP protocol is enabled for this suite; restore when done."""
     ws = WSClient()
     await ws.connect(ws_url)
+    login = await ws.request(
+        {"type": "login", "data": {"username": "admin", "password": "123"}},
+        "login_response",
+    )
+    if not login.get("success"):
+        await ws.disconnect()
+        pytest.skip(f"login failed: {login.get('error')}")
     original = await ws.request({"type": "pfop_config_query"}, "pfop_config_query_response")
     if not original.get("success"):
         await ws.disconnect()
